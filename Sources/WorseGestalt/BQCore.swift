@@ -24,8 +24,9 @@
 //  Every strategy ends with the kernel issuing a sandbox extension tied to the
 //  target vnode. Release the handle with endEscape() when done.
 //
-//  The only remaining ObjC code in the package is the worse_query exploit
-//  itself (Sources/CQueryBridges/worse_query.m, GPL-3.0 © Taj C / forcequit).
+//  The whole package is pure Swift now: the worse_query exploit port lives
+//  at Sources/WorseGestalt/WorseQuery.swift (GPL-3.0, original © Taj C /
+//  forcequit).
 //
 //  SPDX-License-Identifier: GPL-3.0-or-later
 //

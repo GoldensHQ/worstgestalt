@@ -15,17 +15,10 @@ let package = Package(
         ),
     ],
     targets: [
-        // The only remaining ObjC target: the worse_query exploit itself
-        // (forcequitOS, GPL-3.0). The escape engine lives in Swift in the
-        // WorseGestalt target (Sources/WorseGestalt/BQCore.swift).
-        .target(
-            name: "CQueryBridges"
-        ),
-
-        // The app itself.
+        // Pure Swift now: the escape engine (Sources/WorseGestalt/BQCore.swift)
+        // and the worse_query exploit port (Sources/WorseGestalt/WorseQuery.swift).
         .target(
             name: "WorseGestalt",
-            dependencies: ["CQueryBridges"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

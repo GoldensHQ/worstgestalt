@@ -2,7 +2,8 @@
 //  ContentView.swift
 //  worsegestalt
 //
-//  Root shell of the app: five tabs (Gestalt / Presets / Backups / Log / About).
+//  Root shell of the app: six tabs (Gestalt / Presets / Backups / PosterBoard /
+//  Log / About).
 //
 //  SPDX-License-Identifier: GPL-3.0-or-later
 //
@@ -32,6 +33,8 @@ struct ContentView: View {
                 .tabItem { Label("Presets", systemImage: "wand.and.stars") }
             BackupsView(store: store)
                 .tabItem { Label("Backups", systemImage: "externaldrive") }
+            PosterBoardView()
+                .tabItem { Label("PosterBoard", systemImage: "photo.on.rectangle.angled") }
             LogView()
                 .tabItem { Label("Log", systemImage: "terminal") }
             AboutView()
