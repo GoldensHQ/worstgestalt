@@ -2,11 +2,9 @@
 //  PosterBoardEngine.swift
 //  worsegestalt
 //
-//  PosterBoard wallpapers, written from the on-device behaviour rather than
-//  ported from KAMUI's wallpaper code. It follows the descriptor-injection
-//  path (Airlift) in GoldenNugget-mobile's `PosterBoard.swift` /
-//  `PosterBoardAirlift.swift`: a `.tendies` pack is a ZIP of descriptor
-//  directories, and each descriptor becomes a folder under
+//  PosterBoard wallpapers, written from the on-device store layout. A
+//  `.tendies` pack is a ZIP of descriptor directories, and each descriptor
+//  becomes a folder under
 //
 //      <PosterBoard container>/Library/Application Support/
 //          PRBPosterExtensionDataStore/<structure version>/
@@ -14,7 +12,17 @@
 //
 //  The descriptor's own files carry three identity fields. They have to agree
 //  with each other or PosterBoard cannot resolve the wallpaper, so an import
-//  copies the folder under a fresh UUID and rewrites those fields.
+//  copies the folder under a fresh UUID and rewrites those fields. Mercury is
+//  the exception: its folder name and identifiers are its own lookup key, so
+//  they are preserved byte for byte.
+//
+//  This is a *gallery* descriptor install, not a configuration install. The
+//  files go straight into `descriptors/`; adding a role sidecar or changing the
+//  wallpaper family would make PosterBoard treat the descriptor as an
+//  unregistered lock-screen configuration and render the empty 9:41
+//  placeholder. Provider folders are never invented — the write goes to the
+//  structure version where the provider extension already exists, under the
+//  legacy Collections bundle id the store was built with.
 //
 //  This is intentionally descriptor-only. GoldenNugget also stitches the
 //  store's SQLite database from a device backup; we do not. A `container/`
@@ -81,7 +89,7 @@ enum PosterBoardProvider: String, CaseIterable, Identifiable, Codable, Sendable 
 
     var extensionID: String {
         switch self {
-        case .collections: return PosterBoardInstaller.modernCollectionsExtension
+        case .collections: return PosterBoardInstaller.collectionsExtension
         case .photos: return PosterBoardInstaller.photosExtension
         case .mercury: return PosterBoardInstaller.mercuryExtension
         }
@@ -297,9 +305,16 @@ enum PosterBoardInstaller {
 
     /// One descriptor folder this app installed, remembered so Reset removes
     /// only our own wallpapers instead of every provider folder on the device.
+    /// `version` is optional so records written by earlier builds still decode.
     private struct InstalledDescriptor: Codable {
         let provider: String
         let name: String
+        let version: Int?
+    }
+
+    private struct ResetGroup: Hashable {
+        let provider: String
+        let version: Int
     }
 
     private static func recordedDescriptors() -> [InstalledDescriptor] {
@@ -396,6 +411,61 @@ enum PosterBoardInstaller {
         return versions.max() ?? fallbackStructureVersion
     }
 
+    /// All numeric store layouts, newest first. The highest number is not
+    /// necessarily the layout the providers live in: a device can carry an
+    /// empty newer version alongside the version PosterBoard actually uses.
+    private static func storeVersions(of container: String) -> [Int] {
+        let (handle, link) = BQ.escape(container)
+        guard handle >= 0 else { return [] }
+        defer { BQ.endEscape(handle) }
+
+        let base = link ?? container
+        let store = base + "/Library/Application Support/" + storeDirectoryName
+        var isDirectory: ObjCBool = false
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: store, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return [] }
+
+        return ((try? fm.contentsOfDirectory(atPath: store)) ?? [])
+            .compactMap(Int.init)
+            .sorted(by: >)
+    }
+
+    /// Pick the store version that already has a folder for `provider`, and
+    /// return its `descriptors` path. Inventing a provider folder produces an
+    /// unregistered folder that PosterBoard renders as an empty 9:41 wallpaper,
+    /// so only the `descriptors` child may be created here.
+    private static func resolvedDescriptorDirectory(container: String,
+                                                     provider: String)
+        throws -> (path: String, version: Int) {
+        let versions = storeVersions(of: container)
+        let (handle, link) = BQ.escape(container)
+        guard handle >= 0 else {
+            throw PosterBoardError(message: "Could not escape to the PosterBoard container: "
+                + "\(BQ.escapeError(handle) ?? "unknown error").")
+        }
+        defer { BQ.endEscape(handle) }
+        let base = link ?? container
+        let fm = FileManager.default
+
+        for version in versions {
+            let providerPath = (base as NSString).appendingPathComponent(
+                "Library/Application Support/\(storeDirectoryName)/\(version)"
+                + "/Extensions/\(provider)"
+            )
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: providerPath, isDirectory: &isDirectory),
+                  isDirectory.boolValue else { continue }
+            return (descriptorDirectory(container: container,
+                                        version: version,
+                                        provider: provider),
+                    version)
+        }
+
+        throw PosterBoardError(message: "PosterBoard has no \(provider) folder in its store. "
+            + "Open PosterBoard once and create a wallpaper with that provider, then try again.")
+    }
+
     // MARK: Applying a pack
 
     static func apply(pack: PosterBoardPack,
@@ -436,22 +506,24 @@ enum PosterBoardInstaller {
             for (index, source) in sources.enumerated() {
                 progress("Installing \(index + 1) of \(sources.count)…")
 
-                // Supported iOS versions read Collections from the modern
-                // provider. A legacy Collections descriptor is still written
-                // there; the old provider is only cleared by the explicit
-                // "every provider folder" reset.
-                let provider = source.provider == collectionsExtension
-                    ? modernCollectionsExtension
-                    : source.provider
-
-                let target = descriptorDirectory(container: location.container,
-                                                 version: location.structureVersion,
-                                                 provider: provider)
+                // Keep the provider the pack actually names. Re-routing legacy
+                // Collections descriptors to the modern bundle makes the store
+                // look in a provider folder it does not own; gallery
+                // descriptors belong under
+                // com.apple.WallpaperKit.CollectionsPoster.
+                let provider = source.provider
+                let mercury = provider == mercuryExtension
+                let (target, version) = try resolvedDescriptorDirectory(
+                    container: location.container,
+                    provider: provider
+                )
                 try ensureDirectory(container: location.container, target: target)
 
-                let name = UUID().uuidString.uppercased()
+                // MercuryPoster looks its wallpapers up by the textual name in
+                // the descriptor folder. Renaming it to a UUID produces a blank
+                // wallpaper with the stock 9:41 clock, so leave it alone.
+                let name = mercury ? source.url.lastPathComponent : UUID().uuidString.uppercased()
                 let identifier = Int.random(in: identifierRange)
-                let mercury = source.provider == mercuryExtension
 
                 let (handle, link) = BQ.escape(target)
                 guard handle >= 0 else {
@@ -463,9 +535,9 @@ enum PosterBoardInstaller {
                 let destination = URL(fileURLWithPath: base).appendingPathComponent(name)
                 do {
                     try copyDescriptor(from: source.url, to: destination)
-                    try rewriteDescriptor(at: destination,
-                                          identifier: identifier,
-                                          mercury: mercury)
+                    if !mercury {
+                        try rewriteDescriptor(at: destination, identifier: identifier)
+                    }
                 } catch {
                     try? fm.removeItem(at: destination)
                     BQ.endEscape(handle)
@@ -476,12 +548,9 @@ enum PosterBoardInstaller {
                 installed.append((target: target, name: name))
                 // Record as each descriptor lands: if the app is killed before
                 // the run finishes, the next Reset still knows what to remove.
-                records.append(InstalledDescriptor(provider: provider, name: name))
+                records.append(InstalledDescriptor(provider: provider, name: name, version: version))
                 saveRecordedDescriptors(records)
             }
-
-            progress("Refreshing PosterBoard preferences…")
-            try refreshPreferences(container: location.container, progress: progress)
         } catch {
             progress("Rolling back…")
             for item in installed.reversed() {
@@ -523,12 +592,21 @@ enum PosterBoardInstaller {
 
         var removed = 0
         var remaining: [InstalledDescriptor] = []
-        let grouped = Dictionary(grouping: records, by: \.provider)
-        for (provider, entries) in grouped.sorted(by: { $0.key < $1.key }) {
-            progress("Clearing \(provider)…")
+        // The provider folder can live under an older structure version than
+        // the one reported by locate(), so remember the version each install
+        // actually used instead of assuming the newest one.
+        let grouped = Dictionary(grouping: records) {
+            ResetGroup(provider: $0.provider,
+                       version: $0.version ?? location.structureVersion)
+        }
+        for (group, entries) in grouped.sorted(by: {
+            $0.key.provider < $1.key.provider
+                || ($0.key.provider == $1.key.provider && $0.key.version > $1.key.version)
+        }) {
+            progress("Clearing \(group.provider)…")
             let directory = (base as NSString).appendingPathComponent(
-                "Library/Application Support/\(storeDirectoryName)/\(location.structureVersion)"
-                + "/Extensions/\(provider)/descriptors"
+                "Library/Application Support/\(storeDirectoryName)/\(group.version)"
+                + "/Extensions/\(group.provider)/descriptors"
             )
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: directory, isDirectory: &isDirectory),
@@ -549,10 +627,6 @@ enum PosterBoardInstaller {
 
         saveRecordedDescriptors(remaining)
 
-        if removed > 0 {
-            progress("Refreshing PosterBoard preferences…")
-            try refreshPreferences(container: location.container, progress: progress)
-        }
         BQ.log("PosterBoard reset: removed \(removed) installed descriptor(s), "
             + "\(remaining.count) left behind")
         return PosterBoardResetResult(removed: removed,
@@ -590,32 +664,36 @@ enum PosterBoardInstaller {
 
         var removed = 0
         var failed = 0
+        // Descriptors can live in an older structure version even when the
+        // store carries newer empty layouts, so "every provider" has to mean
+        // every structure version, not just the newest one locate() reported.
+        let versions = storeVersions(of: location.container)
         for provider in providers.sorted() {
-            progress("Clearing \(provider)…")
-            let directory = (base as NSString).appendingPathComponent(
-                "Library/Application Support/\(storeDirectoryName)/\(location.structureVersion)"
-                + "/Extensions/\(provider)/descriptors"
-            )
-            var isDirectory: ObjCBool = false
-            guard fm.fileExists(atPath: directory, isDirectory: &isDirectory),
-                  isDirectory.boolValue else { continue }
+            for version in versions.isEmpty ? [location.structureVersion] : versions {
+                progress("Clearing \(provider) (version \(version))…")
+                let directory = (base as NSString).appendingPathComponent(
+                    "Library/Application Support/\(storeDirectoryName)/\(version)"
+                    + "/Extensions/\(provider)/descriptors"
+                )
+                var isDirectory: ObjCBool = false
+                guard fm.fileExists(atPath: directory, isDirectory: &isDirectory),
+                      isDirectory.boolValue else { continue }
 
-            let items = (try? fm.contentsOfDirectory(atPath: directory)) ?? []
-            for item in items {
-                do {
-                    try fm.removeItem(atPath: (directory as NSString).appendingPathComponent(item))
-                    removed += 1
-                } catch {
-                    failed += 1
-                    BQ.log("PosterBoard reset: could not remove \(item): \(error)")
+                let items = (try? fm.contentsOfDirectory(atPath: directory)) ?? []
+                for item in items {
+                    do {
+                        try fm.removeItem(atPath: (directory as NSString).appendingPathComponent(item))
+                        removed += 1
+                    } catch {
+                        failed += 1
+                        BQ.log("PosterBoard reset: could not remove \(item): \(error)")
+                    }
                 }
             }
         }
 
         saveRecordedDescriptors([])
 
-        progress("Refreshing PosterBoard preferences…")
-        try refreshPreferences(container: location.container, progress: progress)
         BQ.log("PosterBoard reset-all: removed \(removed) descriptor(s), \(failed) left behind")
         return PosterBoardResetResult(removed: removed, failed: failed, location: location)
     }
@@ -797,33 +875,21 @@ enum PosterBoardInstaller {
     }
 
     /// Stamp the three identity fields with the same random identifier used by
-    /// the folder name. MercuryPoster is the exception: its identifier is a
-    /// textual lookup key, and rewriting it breaks the provider's own chain.
-    private static func rewriteDescriptor(at root: URL,
-                                          identifier: Int,
-                                          mercury: Bool) throws {
+    /// the folder name. This is the gallery path: no role sidecar and no
+    /// family/name rewrite. Those belong to a configuration install, and a
+    /// descriptor rewritten that way but never registered in the store renders
+    /// as an empty 9:41 wallpaper.
+    private static func rewriteDescriptor(at root: URL, identifier: Int) throws {
         let fm = FileManager.default
 
         // Third-party packs usually omit the identity sidecar. PosterKit then
-        // invents one that disagrees with the userInfo / Wallpaper.plist ids and
-        // traps building the provider, so stamp it with the same random id. An
-        // existing sidecar is replaced too: the pack's UUID no longer matches
-        // the directory it now lives in. Mercury is skipped because its
-        // identifier is its own textual lookup key.
-        if !mercury {
-            let identifierFile = root.appendingPathComponent(
-                "com.apple.posterkit.provider.descriptor.identifier"
-            )
-            try Data(String(identifier).utf8).write(to: identifierFile, options: .atomic)
-        }
-
-        // Native iOS 27 configurations carry a role sidecar. Third-party packs
-        // often omit it; without it the descriptor is treated as a gallery
-        // item rather than a lock-screen configuration.
-        let role = root.appendingPathComponent("com.apple.posterkit.role.identifier")
-        if !fm.fileExists(atPath: role.path) {
-            try Data("PRPosterRoleLockScreen".utf8).write(to: role, options: .atomic)
-        }
+        // invents one that disagrees with the userInfo / Wallpaper.plist ids,
+        // so stamp it with the same random id. An existing sidecar is replaced
+        // too: the pack's UUID no longer matches its new directory name.
+        let identifierFile = root.appendingPathComponent(
+            "com.apple.posterkit.provider.descriptor.identifier"
+        )
+        try Data(String(identifier).utf8).write(to: identifierFile, options: .atomic)
 
         guard let enumerator = fm.enumerator(at: root,
                                              includingPropertiesForKeys: [.isRegularFileKey],
@@ -837,138 +903,36 @@ enum PosterBoardInstaller {
             let values = try? file.resourceValues(forKeys: [.isRegularFileKey])
             guard values?.isRegularFile == true else { continue }
 
-            let name = file.lastPathComponent
-            if name == "com.apple.posterkit.provider.contents.userInfo" {
-                if !mercury {
-                    try rewriteUserInfo(at: file, identifier: identifier)
-                }
-            } else if name.hasSuffix("Wallpaper.plist") {
-                if !mercury {
-                    try rewriteWallpaper(at: file, identifier: identifier)
-                }
+            switch file.lastPathComponent {
+            case "com.apple.posterkit.provider.contents.userInfo":
+                try setPlistValue(identifier,
+                                  forKey: "wallpaperRepresentingIdentifier",
+                                  at: file)
+            case "Wallpaper.plist":
+                try setPlistValue(identifier, forKey: "identifier", at: file)
+            default:
+                continue
             }
         }
     }
 
-    private static func rewriteUserInfo(at url: URL, identifier: Int) throws {
-        var plist = try plistDictionary(at: url)
-        plist["wallpaperRepresentingIdentifier"] = String(identifier)
-        try writeXML(plist, to: url)
-    }
-
-    /// The reference brings a system wallpaper in line with the Marble
-    /// (Configs) model: family and name become Lavender, and the nested
-    /// `assets.lockAndHome.default` entry follows the top-level identifier.
-    private static func rewriteWallpaper(at url: URL, identifier: Int) throws {
-        var plist = try plistDictionary(at: url)
-        plist["identifier"] = identifier
-
-        if var assets = plist["assets"] as? [String: Any],
-           var lockAndHome = assets["lockAndHome"] as? [String: Any],
-           var fallback = lockAndHome["default"] as? [String: Any] {
-            fallback["name"] = "Lavender"
-            fallback["identifier"] = identifier
-            lockAndHome["default"] = fallback
-            assets["lockAndHome"] = lockAndHome
-            plist["assets"] = assets
-        }
-        plist["family"] = "Marble"
-        plist["name"] = "Lavender"
-
-        try writeXML(plist, to: url)
-    }
-
-    private static func plistDictionary(at url: URL) throws -> [String: Any] {
+    /// Change one value without changing the plist's original format.
+    /// Converting a binary descriptor plist to XML changes its bytes for no
+    /// benefit and has broken providers in the past.
+    private static func setPlistValue(_ value: Int, forKey key: String, at url: URL) throws {
         let data = try Data(contentsOf: url)
-        let object = try PropertyListSerialization.propertyList(from: data,
-                                                                options: [],
-                                                                format: nil)
-        guard let dictionary = object as? [String: Any] else {
+        var format = PropertyListSerialization.PropertyListFormat.xml
+        guard var plist = try PropertyListSerialization.propertyList(from: data,
+                                                                    options: [],
+                                                                    format: &format)
+                as? [String: Any] else {
             throw PosterBoardError(message: "\(url.lastPathComponent) is a plist but not a dictionary.")
         }
-        return dictionary
-    }
-
-    private static func writeXML(_ plist: [String: Any], to url: URL) throws {
-        let data = try PropertyListSerialization.data(fromPropertyList: plist,
-                                                      format: .xml,
-                                                      options: 0)
-        try data.write(to: url, options: .atomic)
-    }
-
-    // MARK: Preferences
-
-    /// Ask PosterBoard to re-read its store. The two reset keys are what the
-    /// reference writes after every descriptor install; the migration lists
-    /// only exist on 26.4 and later.
-    private static func refreshPreferences(container: String,
-                                           progress: @escaping @Sendable (String) -> Void)
-        throws {
-        let (handle, link) = BQ.escape(container)
-        guard handle >= 0 else {
-            throw PosterBoardError(message: "Could not escape to the PosterBoard container: "
-                + "\(BQ.escapeError(handle) ?? "unknown error").")
-        }
-        defer { BQ.endEscape(handle) }
-
-        let base = link ?? container
-        let preferences = (base as NSString)
-            .appendingPathComponent("Library/Preferences")
-        let path = (preferences as NSString)
-            .appendingPathComponent("com.apple.PosterBoard.unprotectedUserDefaults.plist")
-        let fm = FileManager.default
-
-        do {
-            try fm.createDirectory(atPath: preferences, withIntermediateDirectories: true)
-        } catch {
-            throw PosterBoardError(message: "Could not create PosterBoard's Preferences folder: "
-                + error.localizedDescription)
-        }
-
-        var plist: [String: Any] = [:]
-        let hadPreferences = fm.fileExists(atPath: path)
-        if hadPreferences {
-            guard let data = fm.contents(atPath: path),
-                  let object = try? PropertyListSerialization.propertyList(from: data,
-                                                                            options: [],
-                                                                            format: nil),
-                  let dictionary = object as? [String: Any] else {
-                throw PosterBoardError(message: "The live PosterBoard preferences are not a "
-                    + "dictionary; refusing to overwrite them.")
-            }
-            plist = dictionary
-        }
-
-        plist["PBF_LOCALE_DID_CHANGE"] = false
-        plist["PBF_RESET_FILE_PROTECTIONS"] = true
-
-        let os = ProcessInfo.processInfo.operatingSystemVersion
-        let usesModernPosters = os.majorVersion > 26
-            || (os.majorVersion == 26 && os.minorVersion >= 4)
-        if !hadPreferences, usesModernPosters {
-            // These defaults belong to a fresh preferences file. An ordinary
-            // install keeps the device's provider and migration lists.
-            plist["PersistedPosterContainerBundleIdentifiers"] = [modernCollectionsExtension]
-            plist["CompletedPosterBundleIdentifierMigrations"] = [
-                "com.apple.Posters.UnityPosterApp.ExtragalacticPoster",
-                "com.apple.Posters.WeatherPosterApp.WeatherPoster",
-                "com.apple.Posters.UnityPosterApp.Unity2025Poster",
-                "com.apple.Posters.UnityPosterApp.UnityPosterExtension",
-                "com.apple.Posters.UnityPosterApp.RhizomePoster",
-                "com.apple.Posters.KaleidoscopePosterApp.KaleidoscopePoster",
-            ]
-        }
-
-        do {
-            let data = try PropertyListSerialization.data(fromPropertyList: plist,
-                                                          format: .binary,
-                                                          options: 0)
-            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-        } catch {
-            throw PosterBoardError(message: "Could not write PosterBoard preferences: "
-                + error.localizedDescription)
-        }
-        progress("PosterBoard preferences refreshed.")
+        plist[key] = value
+        let updated = try PropertyListSerialization.data(fromPropertyList: plist,
+                                                        format: format,
+                                                        options: 0)
+        try updated.write(to: url, options: .atomic)
     }
 
     // MARK: Cleanup

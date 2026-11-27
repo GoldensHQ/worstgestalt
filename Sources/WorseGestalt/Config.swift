@@ -10,7 +10,7 @@ import Foundation
 enum Config {
     /// The App Group identifier used by the worse_query bridge (backend A).
     /// It must match `entitlements.plist` and be registered to the signing identity.
-    /// The KAMUI engine reads its own entitlements via SecTask, so this is a
+    /// The escape engine reads its own entitlements via SecTask, so this is a
     /// hint for other bridges; it must stay in sync with xtool.yml+entitlements.
     ///
     /// Target id `com.awesomenull.worstgestalt` + group `group.com.awesomenull.worstgestalt`

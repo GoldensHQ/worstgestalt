@@ -154,11 +154,10 @@ scenarios covered). The App Group is only needed for backend A
 ## Licenses
 
 **GPL-3.0-or-later** — see [`LICENSE`](LICENSE). The escape code is GPL-3.0
-(© Taj C / forcequitOS; ported from worse_query). The KAMUI engine ported to
-Swift lives in `Sources/WorseGestalt/BQCore.swift` (MIT, © 2026 KAMUI
-contributors — `KamuiEngine-LICENSE`). The NeoSpring respring is by
+(© Taj C / forcequitOS; ported from worse_query). The Swift escape chain lives
+in `Sources/WorseGestalt/BQCore.swift`. The NeoSpring respring is by
 @neonmodder123 & @skadz108 (`rooootdev/neospring`, via GoldenNugget-mobile).
 The key reference is CC BY-SA 4.0 (Apple Wiki).
 
-**Author:** awesomenull · engine: KAMUI · NeoSpring respring: @neonmodder123
-& @skadz108 · escapes: Taj C, forcequitOS.
+**Author:** awesomenull · NeoSpring respring: @neonmodder123 & @skadz108 ·
+escapes: Taj C, forcequitOS.

@@ -72,8 +72,8 @@ struct AboutView: View {
                 Section {
                     Text("""
                     A MobileGestalt editor riding on the worse_query bridge \
-                    from forcequitOS. Respring payload: KAMUI engine (MIT). \
-                    NeoSpring respring by @neonmodder123 & @skadz108.
+                    from forcequitOS. NeoSpring respring by @neonmodder123 \
+                    & @skadz108.
                     """)
                     .font(.footnote)
                     .foregroundStyle(.secondary)

@@ -2,9 +2,7 @@
 //  BQCore.swift
 //  worsegestalt
 //
-//  Swift port of the KAMUI escape engine (previously
-//  Sources/CQueryBridges/Kamui/BQCore.m; MIT, © 2026 KAMUI contributors, see
-//  KamuiEngine-LICENSE). Walks a multi-strategy containermanagerd escape chain:
+//  Pure-Swift containermanagerd escape engine. Walks a multi-strategy chain:
 //
 //    0. bad_query file form           — class 13 + 8-dot partDomain traversal
 //                                       to com.apple.MobileGestalt.plist inside

@@ -6,14 +6,14 @@
 	<string>WorstGestalt</string>
 
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.0</string>
+	<string>2.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 
 	<key>CFBundleName</key>
 	<string>WorstGestalt</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 awesomenull. Engine: KAMUI (MIT, © 2026 KAMUI contributors); NeoSpring respring by @neonmodder123 &amp; @skadz108 (rooootdev/neospring, via GoldenNugget-mobile).</string>
+	<string>© 2026 awesomenull. NeoSpring respring by @neonmodder123 &amp; @skadz108 (rooootdev/neospring, via GoldenNugget-mobile).</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

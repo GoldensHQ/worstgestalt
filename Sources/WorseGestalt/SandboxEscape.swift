@@ -2,9 +2,9 @@
 //  SandboxEscape.swift
 //  worsegestalt
 //
-//  Thin Swift adapter over the escape engine in Sources/WorseGestalt/BQCore.swift
-//  (Swift port of the KAMUI engine — MIT). The engine walks a multi-strategy
-//  chain (bad_query file form, class-13 traversal, geod class-12 symlink,
+//  Thin Swift adapter over the escape engine in Sources/WorseGestalt/BQCore.swift.
+//  The engine walks a multi-strategy chain (bad_query file form, class-13
+//  traversal, geod class-12 symlink,
 //  app-group class-7 symlink, class-2 swap / stage / subpath) and picks the
 //  first one that works on the running build — iOS 27.0.1–27.2 is supported.
 //  It also discovers the App Group from the running process entitlements
@@ -16,7 +16,7 @@
 import Foundation
 
 enum SandboxBackend: String {
-    case kamui = "kamui-chain"
+    case chain = "escape-chain"
 }
 
 /// Owns a consumed sandbox extension handle. Call `release()` when done.
@@ -60,18 +60,18 @@ enum SandboxEscape {
     /// Initialises the engine once and runs the strategy chain. Safe to call repeatedly.
     static func lease() throws -> SandboxLease {
         if !BQ.coreInit() {
-            UILogger.log("[kamui] core init failed (MCM symbols unresolved)")
+            UILogger.log("[escape] core init failed (MCM symbols unresolved)")
             throw SandboxEscapeError.engineError(-1, "engine init failed")
         }
         let (handle, link) = BQ.escape(gestaltTarget)
         let resolved = link ?? gestaltTarget
         if handle < 0 {
             let text = BQ.escapeError(handle) ?? "unknown"
-            UILogger.log("[kamui] escape failed: \(handle) — \(text)")
+            UILogger.log("[escape] escape failed: \(handle) — \(text)")
             throw SandboxEscapeError.engineError(handle, text)
         }
-        UILogger.log("[kamui] escape ok (handle \(handle)) link=\(resolved)")
-        return SandboxLease(handle: handle, backend: .kamui, path: gestaltTarget, linkPath: resolved)
+        UILogger.log("[escape] escape ok (handle \(handle)) link=\(resolved)")
+        return SandboxLease(handle: handle, backend: .chain, path: gestaltTarget, linkPath: resolved)
     }
 
     /// Dumps the engine log (Documents/bqtool.log) into the in-app log.
@@ -83,7 +83,7 @@ enum SandboxEscape {
               let text = String(data: data, encoding: .utf8) else { return }
         let lines = text.split(separator: "\n").suffix(40)
         for line in lines {
-            UILogger.log("[kamui-log] \(line)")
+            UILogger.log("[escape-log] \(line)")
         }
     }
 }

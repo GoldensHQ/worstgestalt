@@ -35,7 +35,7 @@ final class GestaltStore: ObservableObject {
     private var busy = false
 
     /// The MobileGestalt system-group caches dir (the escape target). The
-    /// KAMUI engine resolves the exact plist path per attempt.
+    /// escape engine resolves the exact plist path per attempt.
     static let kMGCaches: String = SandboxEscape.gestaltTarget
 
     // MARK: - Public API

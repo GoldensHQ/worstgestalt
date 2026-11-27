@@ -2,8 +2,8 @@
 //  RespringAsset.swift
 //  worsegestalt
 //
-//  Embeds the NeoSpring respring payload (from the MIT-licensed KAMUI engine)
-//  and materialises it into Documents so BQ.respring() can find it.
+//  Embeds the NeoSpring respring payload and materialises it into Documents so
+//  BQ.respring() can find it.
 //
 //  SPDX-License-Identifier: GPL-3.0-or-later
 //
